@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Oraxen Emoji Importer – Correct Glyph Configuration</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        * { box-sizing: border-box; font-family: system-ui, 'Segoe UI', sans-serif; }
+        body { background: linear-gradient(145deg, #0b1120, #111827); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; margin: 0; color: #1CE820;}
+        .card { max-width: 1100px; width: 100%; background: rgba(18,25,45,0.92); backdrop-filter: blur(12px); border-radius: 2rem; box-shadow: 0 25px 40px -12px rgba(0,0,0,0.6); overflow: hidden; }
+        .header { background: #0f173ad9; padding: 1.5rem 2rem; border-bottom: 1px solid #2d3a5e;}
+        .header h1 { margin: 0; background: linear-gradient(135deg, #F9E0A1, #D9A45C); background-clip: text; -webkit-background-clip: text; color: transparent; }
+        .content { padding: 2rem; }
+        .upload-area { background: #0F264A; border: 2px dashed #2e4a6e; border-radius: 1.5rem; padding: 2rem; text-align: center; cursor: pointer; transition: 0.2s; margin-bottom: 1.5rem; }
+        .upload-area:hover { border-color: #d9a45c; background: #00FF6767; }
+        .btn { background: #2a3b5c; border: none; color: white; font-weight: 600; padding: 0.7rem 1.5rem; border-radius: 40px; cursor: pointer; transition: 0.1s; margin: 0.25rem; }
+        .btn-primary { background: #d9a45c; color: #0b1120; }
+        .btn-primary:hover { background: #f0b87a; }
+        .status { background: #0f172ab3; border-radius: 1rem; padding: 1rem; margin: 1rem 0; font-family: monospace; border-left: 4px solid #d9a45c; color: #cbd5e6; white-space: pre-wrap; }
+        .preview-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 1rem; max-height: 260px; overflow-y: auto; background: #0a0f1c; border-radius: 1rem; padding: 12px; }
+        .emoji-preview-item { background: #1e2a3e; border-radius: 12px; padding: 8px; text-align: center; width: 80px; font-size: 0.7rem; color: #ddd; }
+        .emoji-preview-item img { width: 32px; height: 32px; }
+        .footer { font-size: 0.75rem; text-align: center; padding: 1rem; color: #5f7f9e; border-top: 1px solid #1e2c40; }
+        code { background: #0a101c; padding: 0.2rem 0.4rem; border-radius: 8px; }
+        .loader { display: inline-block; width: 16px; height: 16px; border: 2px solid #d9a45c; border-radius: 50%; border-top-color: transparent; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        progress { width: 100%; height: 6px; border-radius: 3px; margin: 8px 0; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <div class="header">
+        <h1>🚀 Oraxen Emoji Importer (Glyph Creator)</h1>
+        <p>📦 API for Emoji Names, Shortcodes & Emoticons → Perfect Oraxen Glyph Configuration</p>
+    </div>
+    <div class="content">
+        <div class="upload-area" id="uploadArea">
+            <div>🗂️ Upload ZIP with Emoji PNGs (e.g. <code>1f600.png</code>, <code>2764.png</code>)</div>
+            <input type="file" id="fileInput" accept=".zip" style="display:none">
+            <button class="btn" id="selectBtn">📁 Select ZIP</button>
+        </div>
+        <div id="apiStatus" class="status">🌐 Loading Emoji API … <span class="loader"></span></div>
+        <div id="status" class="status">💡 Waiting for input.</div>
+        <div id="previewPanel" style="display:none;"><h3>📸 Preview</h3><div id="previewList" class="preview-grid"></div><progress id="generateProgress" value="0" max="100" style="display:none"></progress></div>
+        <div style="display: flex; justify-content: flex-end;"><button id="downloadBtn" class="btn btn-primary" disabled>⬇️ Generate Oraxen Pack</button></div>
+        <div class="footer">✅ Output: <code>oraxen_pack.zip</code> → Unzip directly into <code>/plugins/Oraxen/</code></div>
+    </div>
+</div>
+<script>
+    // ---------- 1. Emoji API ----------
+    let emojiDatabase = null;
+    let apiLoadPromise = null;
+
+    async function loadEmojiAPI() {
+        const apiUrl = 'https://raw.githubusercontent.com/iamcal/emoji-data/master/emoji.json';
+        try {
+            const response = await fetch(apiUrl);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            const map = new Map();
+            for (const entry of data) {
+                const unified = entry.unified.toLowerCase().replace(/-/g, '');
+                let shortcodes = (entry.short_names || []).map(s => `:${s}:`);
+                let emoticons = (entry.texts || []).filter(t => typeof t === 'string' && t.length <= 6);
+                map.set(unified, {
+                    name: entry.short_name || unified,
+                    shortcodes: [...new Set(shortcodes)],
+                    emoticons: [...new Set(emoticons)]
+                });
+            }
+            return map;
+        } catch (err) {
+            throw new Error(`API Error: ${err.message}`);
+        }
+    }
+
+    apiLoadPromise = loadEmojiAPI().then(db => {
+        emojiDatabase = db;
+        document.getElementById('apiStatus').innerHTML = '✅ Emoji API loaded (iamcal/emoji-data)';
+    }).catch(err => {
+        document.getElementById('apiStatus').innerHTML = `❌ ${err.message}`;
+    });
+
+    async function getEmojiMeta(codepointHex) {
+        if (!emojiDatabase) await apiLoadPromise;
+        const norm = codepointHex.toLowerCase();
+        const found = emojiDatabase?.get(norm);
+        if (found) return found;
+        return { name: `emoji_${norm}`, shortcodes: [`:emoji_${norm}:`], emoticons: [] };
+    }
+
+    // ---------- 2. Image Dimensions ----------
+    function getImageDimensions(blob) {
+        return new Promise((resolve, reject) => {
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => { URL.revokeObjectURL(url); resolve({ width: img.width, height: img.height }); };
+            img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image processing error")); };
+            img.src = url;
+        });
+    }
+
+    // ---------- 3. Parse ZIP ----------
+    async function processZip(zipFile) {
+        const zip = await JSZip.loadAsync(zipFile);
+        const pngMatches = [];
+        zip.forEach((relPath, file) => {
+            if (!file.dir && /\.png$/i.test(relPath)) {
+                const fileName = relPath.split('/').pop();
+                const match = fileName.match(/^([a-fA-F0-9]+)\.png$/i);
+                if (match) pngMatches.push({ file, codepoint: match[1].toLowerCase(), fileName });
+            }
+        });
+        if (!pngMatches.length) throw new Error("No PNGs with hex names found (e.g. 1f600.png)");
+        const processed = [];
+        for (const item of pngMatches) {
+            const blob = await item.file.async("blob");
+            const dims = await getImageDimensions(blob);
+            const meta = await getEmojiMeta(item.codepoint);
+            processed.push({
+                id: `${item.codepoint}`,
+                fileName: item.fileName,
+                name: meta.name,
+                shortcodes: meta.shortcodes,
+                emoticons: meta.emoticons,
+                imageBlob: blob,
+                width: dims.width,
+                height: dims.height
+            });
+        }
+        return processed;
+    }
+
+    // ---------- 4. ORAXEN SPECIFIC YAML SERIALIZATION ----------
+    function yamlSerialize(obj, indent = 0) {
+        const spaces = '  '.repeat(indent);
+        if (obj === null || obj === undefined) return 'null';
+        if (typeof obj === 'string') {
+            if (obj.includes(':') || obj.includes('#') || obj.includes('{') || obj.includes('[') || obj.includes('*') || obj.includes('&') || obj.includes('>') || obj.includes('|') || obj.includes('`') || obj.includes('@') || obj.includes('%') || obj.includes('?') || obj.match(/^\d/) || obj === 'yes' || obj === 'no' || obj === 'true' || obj === 'false' || obj === 'null') {
+                return `"${obj.replace(/["\\]/g, '\\$&')}"`;
+            }
+            return obj;
+        }
+        if (typeof obj === 'number' || typeof obj === 'boolean') return String(obj);
+        if (Array.isArray(obj)) {
+            if (obj.length === 0) return '[]';
+            let out = '';
+            for (const item of obj) {
+                const itemStr = yamlSerialize(item, indent + 1);
+                out += `\n${spaces}- ${itemStr.trimStart()}`;
+            }
+            return out.trimStart();
+        }
+        if (typeof obj === 'object') {
+            const entries = Object.entries(obj);
+            if (entries.length === 0) return '{}';
+            let out = '';
+            for (const [key, val] of entries) {
+                const valStr = yamlSerialize(val, indent + 1);
+                if (typeof val === 'object' && val !== null && (Object.keys(val).length > 0 || (Array.isArray(val) && val.length > 0))) {
+                    out += `\n${spaces}${key}:${valStr.startsWith('\n') ? valStr : '\n' + '  '.repeat(indent + 1) + valStr.trimStart()}`;
+                } else {
+                    out += `\n${spaces}${key}: ${valStr}`;
+                }
+            }
+            return out.trimStart();
+        }
+        return String(obj);
+    }
+
+    // Generate Oraxen Glyph YAML (glyphs/emoji.yml)
+    function generateGlyphYaml(emojis) {
+        const glyphs = {};
+        for (const em of emojis) {
+            const keywords = [...em.shortcodes];
+            for (const emot of em.emoticons) if (!keywords.includes(emot)) keywords.push(emot);
+            glyphs[`emoji_${em.id}`] = {
+                texture: `emoji/${em.fileName}`,
+                ascent: 8, // Oraxen default uses height for ascent
+                height: 8,
+                is_emoji: true,
+                chat: {
+                  placeholders: keywords,
+                  permission: `oraxen.emoji.${em.id}`
+                }
+            };
+        }
+        return yamlSerialize(glyphs);
+    }
+
+    // ---------- 5. Resourcepack Building ----------
+    // Oraxen expects pack.yml in the Oraxen folder, not inside resourcepack.
+    // We build a root zip that the user can unzip directly into /plugins/Oraxen/
+    async function buildOutputZip(emojis, onProgress) {
+        const rootZip = new JSZip();
+        
+        // 1. Create glyphs folder with the glyph configuration
+        const glyphsFolder = rootZip.folder("glyphs");
+        glyphsFolder.file("emoji.yml", generateGlyphYaml(emojis));
+
+        // 2. Create the pack folder structure for the resource pack
+        const packFolder = rootZip.folder("pack");
+        const texturesFolder = packFolder.folder("textures/emoji");
+        
+        // Place PNGs in the root textures folder (for Oraxen reference).
+        for (const em of emojis) {
+            const arrayBuffer = await em.imageBlob.arrayBuffer();
+            texturesFolder.file(em.fileName, arrayBuffer);
+            if (onProgress) onProgress(1, 2);
+        }
+
+        return rootZip;
+    }
+
+    // ---------- 6. UI ----------
+    let currentEmojis = [];
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const selectBtn = document.getElementById('selectBtn');
+    const statusDiv = document.getElementById('status');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const previewPanel = document.getElementById('previewPanel');
+    const previewList = document.getElementById('previewList');
+    const progressBar = document.getElementById('generateProgress');
+
+    function setStatus(text, isError = false) {
+        statusDiv.innerHTML = isError ? `⚠️ ${text}` : `✨ ${text}`;
+        statusDiv.style.borderLeftColor = isError ? '#e06c75' : '#d9a45c';
+    }
+
+    function updatePreview(emojis) {
+        if (!emojis.length) { previewPanel.style.display = 'none'; return; }
+        previewPanel.style.display = 'block';
+        previewList.innerHTML = '';
+        for (const em of emojis.slice(0, 30)) {
+            const url = URL.createObjectURL(em.imageBlob);
+            const div = document.createElement('div');
+            div.className = 'emoji-preview-item';
+            div.innerHTML = `<img src="${url}"><div>${em.name.slice(0,12)}</div><div style="font-size:9px;">${em.shortcodes[0] || ''}</div>`;
+            previewList.appendChild(div);
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+        }
+    }
+
+    async function handleZipFile(file) {
+        setStatus("📦 Processing ZIP with API...");
+        downloadBtn.disabled = true;
+        try {
+            if (!emojiDatabase) { setStatus("⏳ Loading API..."); await apiLoadPromise; }
+            const emojis = await processZip(file);
+            currentEmojis = emojis;
+            updatePreview(emojis);
+            setStatus(`✅ ${emojis.length} emojis loaded. Ready for Oraxen.`);
+            downloadBtn.disabled = false;
+            downloadBtn.style.opacity = "1";
+        } catch (err) {
+            setStatus(err.message, true);
+            currentEmojis = [];
+            previewPanel.style.display = 'none';
+        }
+    }
+
+    selectBtn.onclick = () => fileInput.click();
+    uploadArea.onclick = () => fileInput.click();
+    uploadArea.ondragover = e => { e.preventDefault(); uploadArea.style.borderColor = '#d9a45c'; };
+    uploadArea.ondragleave = () => uploadArea.style.borderColor = '#2e4a6e';
+    uploadArea.ondrop = async e => {
+        e.preventDefault();
+        uploadArea.style.borderColor = '#2e4a6e';
+        const file = e.dataTransfer.files[0];
+        if (file && file.name.endsWith('.zip')) await handleZipFile(file);
+        else setStatus("Please drop a ZIP file.", true);
+    };
+    fileInput.onchange = async e => { if (e.target.files.length) await handleZipFile(e.target.files[0]); };
+
+    downloadBtn.onclick = async () => {
+        if (!currentEmojis.length) { setStatus("No emojis loaded.", true); return; }
+        setStatus("⚙️ Generating Oraxen pack...");
+        downloadBtn.disabled = true;
+        progressBar.style.display = 'block';
+        try {
+            const zip = await buildOutputZip(currentEmojis, (done, total) => progressBar.value = (done/total)*100);
+            const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = "oraxen_emoji_pack.zip";
+            a.click();
+            URL.revokeObjectURL(a.href);
+            setStatus("✅ Oraxen pack generated. Unzip contents into /plugins/Oraxen/");
+        } catch (err) {
+            setStatus(`Error: ${err.message}`, true);
+        } finally {
+            downloadBtn.disabled = false;
+            progressBar.style.display = 'none';
+        }
+    };
+</script>
+</body>
+</html>
