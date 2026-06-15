@@ -52,7 +52,7 @@
     let apiLoadPromise = null;
 
     async function loadEmojiAPI() {
-        const apiUrl = 'https://raw.githubusercontent.com/iamcal/emoji-data/master/emoji.json';
+        const apiUrl = 'https://raw.githubusercontent.com/mc-convert/emoji-data/master/emoji.json';
         try {
             const response = await fetch(apiUrl);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -76,7 +76,7 @@
 
     apiLoadPromise = loadEmojiAPI().then(db => {
         emojiDatabase = db;
-        document.getElementById('apiStatus').innerHTML = '✅ Emoji API loaded (iamcal/emoji-data)';
+        document.getElementById('apiStatus').innerHTML = '✅ Emoji API loaded (mc-convert/emoji-data)';
     }).catch(err => {
         document.getElementById('apiStatus').innerHTML = `❌ ${err.message}`;
     });
